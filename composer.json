@@ -1,0 +1,30 @@
+{
+    "name": "recoded/laravel-mongodb",
+    "description": "MongoDB connection for Laravel",
+    "type": "library",
+    "license": "MIT",
+    "authors": [
+        {
+            "name": "Noël Hagestein",
+            "email": "noel@recoded.dev"
+        }
+    ],
+    "require": {
+        "php": "^7.4",
+        "ext-mongodb": "*",
+        "laravel/framework": "^8.0",
+        "mongodb/mongodb": "^1.5"
+    },
+    "autoload": {
+        "psr-4": {
+            "Recoded\\MongoDB\\": "src/"
+        }
+    },
+    "extra": {
+        "laravel": {
+            "providers": [
+                "Recoded\\MongoDB\\MongodbServiceProvider"
+            ]
+        }
+    }
+}
