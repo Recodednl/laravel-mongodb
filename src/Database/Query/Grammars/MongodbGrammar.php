@@ -4,6 +4,7 @@ namespace Recoded\MongoDB\Database\Query\Grammars;
 
 use Illuminate\Database\Query\Builder;
 use Illuminate\Database\Query\Grammars\Grammar;
+use Illuminate\Support\Collection;
 use MongoDB\BSON\ObjectId;
 
 class MongodbGrammar extends Grammar
@@ -17,8 +18,6 @@ class MongodbGrammar extends Grammar
         'orders',
         'aggregate',
 //        'groups',
-//        'havings',
-//        'lock',
     ];
 
     protected function compileAggregate(Builder $query, $aggregate)
@@ -68,9 +67,17 @@ class MongodbGrammar extends Grammar
             }
         }
 
-        $final = empty($match) ? [] : [['match' => $match]];
+        $final = empty($match) ? [] : [['$match' => $match]];
 
         return [...$final, ...$sql];
+    }
+
+    public function compileDelete(Builder $query): array
+    {
+        return [
+            'collection' => $query->from,
+            'filter' => $this->compileWheres($query),
+        ];
     }
 
     public function compileInsert(Builder $query, array $values): array
@@ -120,6 +127,22 @@ class MongodbGrammar extends Grammar
         return $this->compileComponents($query);
     }
 
+    public function compileUpdate(Builder $query, array $values): array
+    {
+        return [
+            'collection' => $this->wrapTable($query->from),
+            'filter' => $this->compileWheres($query),
+            'values' => $this->compileUpdateColumns($query, $values),
+        ];
+    }
+
+    protected function compileUpdateColumns(Builder $query, array $values): array
+    {
+        return Collection::make($values)->mapWithKeys(function ($value, $key) {
+            return [$this->wrap($key) => $this->parameter($value)];
+        })->all();
+    }
+
     public function compileWheres(Builder $query): array
     {
         if (is_null($query->wheres)) {
@@ -150,6 +173,20 @@ class MongodbGrammar extends Grammar
 
             return $result;
         })->reduce('array_merge', []);
+    }
+
+    protected function convertKey(string $column, $value)
+    {
+        if (preg_match('/(.*\.)?_id$/', $column) && is_string($value)) {
+            return new ObjectId($value);
+        }
+
+        return $value;
+    }
+
+    public function parameter($value)
+    {
+        return $this->isExpression($value) ? $this->getValue($value) : $value;
     }
 
     protected function whereBasic(Builder $query, $where): array
@@ -231,12 +268,12 @@ class MongodbGrammar extends Grammar
         return $where['sql'];
     }
 
-    protected function convertKey(string $column, $value)
+    public function wrap($value, $prefixAlias = false)
     {
-        if (preg_match('/(.*\.)?_id$/', $column) && is_string($value)) {
-            return new ObjectId($value);
-        }
+        // TODO only remove table prefix. Allow dot notation
+        $value = $this->isExpression($value) ? $this->getValue($value) : $value;
+        $segments = explode('.', $value);
 
-        return $value;
+        return end($segments);
     }
 }

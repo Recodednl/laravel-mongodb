@@ -43,6 +43,21 @@ class MongodbConnection extends Connection
         $this->useDefaultPostProcessor();
     }
 
+    public function affectingCallback($query, callable $callback, $bindings = [], $default = 0)
+    {
+        return $this->run(json_encode($query), $bindings, function () use ($bindings, $callback, $default, $query) {
+            if ($this->pretending()) {
+                return $default;
+            }
+
+            $result = $callback($query, $bindings);
+
+            $this->recordsHaveBeenModified($result);
+
+            return $result;
+        });
+    }
+
     public function assertDsn(string $dsn): void
     {
         if (!preg_match(static::DSN_PATTERN, $dsn)) {
@@ -68,6 +83,16 @@ class MongodbConnection extends Connection
         }
 
         return new Client($dsn, $options, $driverOptions);
+    }
+
+    public function delete($query, $bindings = [])
+    {
+        return $this->affectingCallback($query, function ($query) {
+            return $this
+                ->getCollection($query['collection'])
+                ->deleteMany($query['filter'])
+                ->getDeletedCount();
+        }, $bindings);
     }
 
     public function getCollection(string $collection): Collection
@@ -108,19 +133,13 @@ class MongodbConnection extends Connection
 
     public function insert($query, $bindings = [])
     {
-        return $this->run(json_encode($query), $bindings, function () use ($query) {
-            if ($this->pretending()) {
-                return true;
-            }
-
+        return $this->affectingCallback($query, function ($query) {
             $this->lastInserted = $this
                 ->getCollection($query['collection'])
                 ->insertOne($query['values']);
 
-            $this->recordsHaveBeenModified();
-
             return $this->lastInserted->isAcknowledged();
-        });
+        }, $bindings, true);
     }
 
     public function statement($query, $bindings = [])
@@ -133,5 +152,15 @@ class MongodbConnection extends Connection
         $query = new Builder($this);
 
         return $query->from($table);
+    }
+
+    public function update($query, $bindings = [])
+    {
+        return $this->affectingCallback($query, function ($query) {
+            return $this
+                ->getCollection($query['collection'])
+                ->updateMany($query['filter'], ['$set' => $query['values']])
+                ->getModifiedCount();
+        }, $bindings);
     }
 }
