@@ -13,9 +13,9 @@ class MongodbGrammar extends Grammar
         'aggregations',
         'offset',
         'limit',
+        'columns',
         'orders',
         'aggregate',
-//        'columns',
 //        'groups',
 //        'havings',
 //        'lock',
@@ -25,6 +25,23 @@ class MongodbGrammar extends Grammar
     {
         return [
             $aggregate['function'] => $aggregate['columns'] ?? 'aggregate',
+        ];
+    }
+
+    protected function compileColumns(Builder $query, $columns): ?array
+    {
+        if ($query->aggregate !== null || $columns === ['*']) {
+            return null;
+        }
+
+        $project = array_fill_keys($columns, true);
+
+        if (!in_array('_id', $columns)) {
+            $project['_id'] = false;
+        }
+
+        return [
+            '$project' => $project,
         ];
     }
 
@@ -38,6 +55,10 @@ class MongodbGrammar extends Grammar
                 $method = 'compile' . ucfirst($component);
 
                 $value = $this->$method($query, $query->{$component});
+
+                if ($value === null) {
+                    continue;
+                }
 
                 if ($component === 'wheres') {
                     $match = array_merge($match, $value);
