@@ -11,6 +11,7 @@
     ],
     "require": {
         "php": "^7.4",
+        "ext-json": "*",
         "ext-mongodb": "*",
         "laravel/framework": "^8.0",
         "mongodb/mongodb": "^1.5"

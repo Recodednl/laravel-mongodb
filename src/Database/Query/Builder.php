@@ -8,6 +8,7 @@ use MongoDB\BSON\UTCDateTime;
 use MongoDB\Collection;
 use MongoDB\Model\BSONArray;
 use MongoDB\Model\BSONDocument;
+use Recoded\MongoDB\Exceptions\UnsupportedByMongoDBException;
 
 class Builder extends IlluminateBuilder
 {
@@ -18,9 +19,31 @@ class Builder extends IlluminateBuilder
         return $this;
     }
 
+    public function addWhereExistsQuery(IlluminateBuilder $query, $boolean = 'and', $not = false)
+    {
+        throw new UnsupportedByMongoDBException('(Doesnt)-exists Query');
+    }
+
+    public function avg($column)
+    {
+        return $this->aggregateGroupedColumn(__FUNCTION__, $column);
+    }
+
+    public function count($columns = '*')
+    {
+        return (int) $this->aggregate(__FUNCTION__, null);
+    }
+
     public function dd(): void
     {
-        dd($this->toSql());
+        dd($this->collection->getCollectionName(), $this->toSql());
+    }
+
+    public function dump(): self
+    {
+        dump($this->collection->getCollectionName(), $this->toSql());
+
+        return $this;
     }
 
     public function from($collection, $as = null)
@@ -30,9 +53,54 @@ class Builder extends IlluminateBuilder
         return parent::from($collection);
     }
 
+    public function aggregateGroupedColumn($function, $column)
+    {
+        $function = '$' . ltrim($function, '$');
+        $column = '$' . ltrim($column, '$');
+
+        return $this->aggregate('group', [
+            '_id' => '',
+            'aggregate' => [$function => $column],
+        ]);
+    }
+
+    public function max($column)
+    {
+        return $this->aggregateGroupedColumn(__FUNCTION__, $column);
+    }
+
     public function mergeBindings(IlluminateBuilder $query)
     {
         return $this;
+    }
+
+    public function min($column)
+    {
+        return $this->aggregateGroupedColumn(__FUNCTION__, $column);
+    }
+
+    public function orderBy($column, $direction = 'asc')
+    {
+        $direction = is_string($direction) ? strtolower($direction) : $direction;
+
+        if (!is_array($direction) && !in_array($direction, ['asc', 'desc'], true)) {
+            throw new \InvalidArgumentException('Order direction must be "asc", "desc" or an array.');
+        }
+
+        $direction = $direction === 'asc' ? 1 : $direction;
+        $direction = $direction === 'desc' ? -1 : $direction;
+
+        $this->orders[] = [
+            'column' => $column,
+            'direction' => $direction,
+        ];
+
+        return $this;
+    }
+
+    public function orderByRaw($sql, $bindings = [])
+    {
+        throw new UnsupportedByMongoDBException('OrderByRaw');
     }
 
     protected function parseMongo(array $data): array
@@ -51,7 +119,9 @@ class Builder extends IlluminateBuilder
             }
 
             if ($value instanceof UTCDateTime) {
-                $value = $value->toDateTime()->format('Y-m-d H:i:s');
+                $value = $value->toDateTime()->format(
+                    $this->grammar->getDateFormat(),
+                );
             }
         });
 
@@ -62,7 +132,7 @@ class Builder extends IlluminateBuilder
     {
         /** @var \MongoDB\Model\BSONDocument[] $results */
         $results = iterator_to_array(
-            $this->collection->find($this->toSql()),
+            $this->collection->aggregate($this->toSql()),
         );
 
         return array_map(function (BSONDocument $document) {
@@ -72,8 +142,25 @@ class Builder extends IlluminateBuilder
         }, $results);
     }
 
+    protected function setAggregate($function, $columns)
+    {
+        return parent::setAggregate('$' . ltrim($function, '$'), $columns);
+    }
+
     public function setBindings(array $bindings, $type = 'where')
     {
         return $this;
+    }
+
+    public function sum($column)
+    {
+        return $this->aggregateGroupedColumn(__FUNCTION__, $column) ?: 0;
+    }
+
+    public function truncate(): bool
+    {
+        return $this->collection
+            ->deleteMany([])
+            ->isAcknowledged();
     }
 }

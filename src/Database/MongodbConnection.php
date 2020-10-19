@@ -8,8 +8,10 @@ use InvalidArgumentException;
 use MongoDB\Client;
 use MongoDB\Collection;
 use MongoDB\Database;
+use MongoDB\InsertOneResult;
 use Recoded\MongoDB\Database\Query\Builder;
 use Recoded\MongoDB\Database\Query\Grammars\MongodbGrammar;
+use Recoded\MongoDB\Database\Query\Processors\Processor;
 
 class MongodbConnection extends Connection
 {
@@ -18,6 +20,8 @@ class MongodbConnection extends Connection
     protected Client $connection;
 
     protected Database $db;
+
+    protected ?InsertOneResult $lastInserted = null;
 
     /** @noinspection PhpMissingParentConstructorInspection */
     public function __construct(array $config = [])
@@ -80,9 +84,19 @@ class MongodbConnection extends Connection
         return $matches[1];
     }
 
+    protected function getDefaultPostProcessor(): Processor
+    {
+        return new Processor();
+    }
+
     protected function getDefaultQueryGrammar(): Grammar
     {
         return new MongodbGrammar();
+    }
+
+    public function getLastInserted(): ?InsertOneResult
+    {
+        return $this->lastInserted;
     }
 
     public function query(): Builder
@@ -90,6 +104,28 @@ class MongodbConnection extends Connection
         return new Builder(
             $this, $this->getQueryGrammar(), $this->getPostProcessor(),
         );
+    }
+
+    public function insert($query, $bindings = [])
+    {
+        return $this->run(json_encode($query), $bindings, function () use ($query) {
+            if ($this->pretending()) {
+                return true;
+            }
+
+            $this->lastInserted = $this
+                ->getCollection($query['collection'])
+                ->insertOne($query['values']);
+
+            $this->recordsHaveBeenModified();
+
+            return $this->lastInserted->isAcknowledged();
+        });
+    }
+
+    public function statement($query, $bindings = [])
+    {
+        throw new \LogicException('Probably isn\'t going to be used with MongoDB');
     }
 
     public function table($table, $as = null): Builder

@@ -9,32 +9,89 @@ use MongoDB\BSON\ObjectId;
 class MongodbGrammar extends Grammar
 {
     protected $selectComponents = [
-//        'aggregate',
-//        'columns',
-//        'from',
-//        'joins',
         'wheres',
+        'aggregations',
+        'offset',
+        'limit',
+        'orders',
+        'aggregate',
+//        'columns',
 //        'groups',
 //        'havings',
-//        'orders',
-//        'limit',
-//        'offset',
 //        'lock',
     ];
 
+    protected function compileAggregate(Builder $query, $aggregate)
+    {
+        return [
+            $aggregate['function'] => $aggregate['columns'] ?? 'aggregate',
+        ];
+    }
+
     protected function compileComponents(Builder $query): array
     {
+        $match = [];
         $sql = [];
 
         foreach ($this->selectComponents as $component) {
             if (isset($query->{$component})) {
                 $method = 'compile' . ucfirst($component);
 
-                $sql = array_merge($sql, $this->$method($query, $query->{$component}));
+                $value = $this->$method($query, $query->{$component});
+
+                if ($component === 'wheres') {
+                    $match = array_merge($match, $value);
+                } else {
+                    $sql[] = $value;
+                }
             }
         }
 
-        return $sql;
+        $final = empty($match) ? [] : [['match' => $match]];
+
+        return [...$final, ...$sql];
+    }
+
+    public function compileInsert(Builder $query, array $values): array
+    {
+        return [
+            'collection' => $query->from,
+            'values' => $values,
+        ];
+    }
+
+    protected function compileLimit(Builder $query, $limit): array
+    {
+        return [
+            '$limit' => abs($limit),
+        ];
+    }
+
+    protected function compileOffset(Builder $query, $offset): array
+    {
+        return [
+            '$skip' => abs($offset),
+        ];
+    }
+
+    protected function compileOrders(Builder $query, $orders): array
+    {
+        if (empty($orders)) {
+            return [];
+        }
+
+        return [
+            '$sort' => $this->compileOrdersToArray($query, $orders),
+        ];
+    }
+
+    protected function compileOrdersToArray(Builder $query, $orders): array
+    {
+        return array_reduce($orders, function (array $carry, array $order) {
+            $carry[$order['column']] = $order['direction'];
+
+            return $carry;
+        }, []);
     }
 
     public function compileSelect(Builder $query): array
