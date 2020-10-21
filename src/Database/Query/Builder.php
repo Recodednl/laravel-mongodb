@@ -64,6 +64,16 @@ class Builder extends IlluminateBuilder
         ]);
     }
 
+    public function insertOrIgnore(array $values)
+    {
+        throw new UnsupportedByMongoDBException('InsertOrIgnore');
+    }
+
+    public function insertUsing(array $columns, $query)
+    {
+        throw new UnsupportedByMongoDBException('InsertUsing');
+    }
+
     public function max($column)
     {
         return $this->aggregateGroupedColumn(__FUNCTION__, $column);
