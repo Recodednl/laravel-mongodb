@@ -9,6 +9,11 @@ trait HasMongoConnection
         return '_id';
     }
 
+    public function getKeyType()
+    {
+        return 'string';
+    }
+
     public function qualifyColumn($column)
     {
         return $column;

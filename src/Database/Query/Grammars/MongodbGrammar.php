@@ -6,6 +6,7 @@ use Illuminate\Database\Query\Builder;
 use Illuminate\Database\Query\Grammars\Grammar;
 use Illuminate\Support\Collection;
 use MongoDB\BSON\ObjectId;
+use MongoDB\BSON\Regex;
 
 class MongodbGrammar extends Grammar
 {
@@ -172,7 +173,7 @@ class MongodbGrammar extends Grammar
             }
 
             return $result;
-        })->reduce('array_merge', []);
+        })->reduce('array_merge_recursive', []);
     }
 
     protected function convertKey(string $column, $value)
@@ -184,6 +185,17 @@ class MongodbGrammar extends Grammar
         return $value;
     }
 
+    protected function isValidPattern(string $pattern): bool
+    {
+        try {
+            preg_match($pattern, '');
+
+            return true;
+        } catch (\Throwable $e) {
+            return $e instanceof \ErrorException;
+        }
+    }
+
     public function parameter($value)
     {
         return $this->isExpression($value) ? $this->getValue($value) : $value;
@@ -191,7 +203,52 @@ class MongodbGrammar extends Grammar
 
     protected function whereBasic(Builder $query, $where): array
     {
-        return [$column = $where['column'] => $this->convertKey($column, $where['value'])]; // TODO different operator logic
+        $column = $where['column'];
+        $operator = $where['operator'];
+        $value = $where['value'];
+        $not = false;
+
+        if (in_array($operator, ['like', 'not like'])) {
+            $value = preg_quote($value, '/');
+            $value = preg_replace('/(%$|^%)/', '.*', $value);
+
+            $value = new Regex($value, 'i');
+            $not = $operator === 'not like';
+            $operator = 'regex';
+        } elseif (in_array($operator, ['regexp', 'not regexp', 'regex', 'not regex'])) {
+            $not = preg_match('/^not/', $operator);
+            $operator = 'regex';
+
+            if (!$value instanceof Regex && is_string($value)) {
+                if ($this->isValidPattern($value)) {
+                    preg_match('/^([\/\#\+\%])(.*)\1([a-zA-Z]+)?$/', $value, $matches);
+
+                    $value = new Regex($matches[2], $matches[3] ?? '');
+                } else {
+                    $value = new Regex($value);
+                }
+            }
+        }
+
+        $operator = [
+            '>' => 'gt',
+            '>=' => 'gte',
+            '<' => 'lt',
+            '<=' => 'lte',
+            '!=' => 'ne',
+            '<>' => 'ne',
+            '<=>' => '=',
+        ][$operator] ?? $operator;
+
+        $value = $this->convertKey($column, $value);
+
+        if (!isset($operator) || $operator == '=') {
+            $result = $value;
+        } else {
+            $result = ['$' . $operator => $value];
+        }
+
+        return [$column => $not ? ['$not' => $result] : $result];
     }
 
     protected function whereNested(Builder $query, $where): array

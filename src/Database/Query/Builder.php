@@ -14,6 +14,12 @@ class Builder extends IlluminateBuilder
 {
     protected Collection $collection;
 
+    public $operators = [
+        '=', '<', '>', '<=', '>=', '<>', '!=', '<=>',
+        'like', 'not like',
+        'regexp', 'not regexp', 'regex', 'not regex',
+    ];
+
     public function addBinding($value, $type = 'where'): self
     {
         return $this;
@@ -44,6 +50,11 @@ class Builder extends IlluminateBuilder
         dump($this->collection->getCollectionName(), $this->toSql());
 
         return $this;
+    }
+
+    public function exists(): bool
+    {
+        return $this->count() > 0;
     }
 
     public function from($collection, $as = null)
