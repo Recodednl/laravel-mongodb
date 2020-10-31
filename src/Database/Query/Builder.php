@@ -14,6 +14,11 @@ class Builder extends IlluminateBuilder
 {
     protected Collection $collection;
 
+    /**
+     * @var \Recoded\MongoDB\Database\MongodbConnection
+     */
+    public $connection;
+
     public $operators = [
         '=', '<', '>', '<=', '>=', '<>', '!=', '<=>',
         'like', 'not like',
@@ -59,7 +64,7 @@ class Builder extends IlluminateBuilder
 
     public function from($collection, $as = null)
     {
-        $this->collection = $this->connection->getCollection($collection);
+        $this->collection = $this->connection->getMongo()->selectCollection($collection);
 
         return parent::from($collection);
     }

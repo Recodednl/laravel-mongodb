@@ -10,6 +10,8 @@ use MongoDB\BSON\Regex;
 
 class MongodbGrammar extends Grammar
 {
+    use \Recoded\MongoDB\Database\Grammar;
+
     protected $selectComponents = [
         'wheres',
         'aggregations',
@@ -83,9 +85,11 @@ class MongodbGrammar extends Grammar
 
     public function compileInsert(Builder $query, array $values): array
     {
+        $shouldWrap = !empty(array_filter($values, fn ($key) => !is_int($key), ARRAY_FILTER_USE_KEY));
+
         return [
             'collection' => $query->from,
-            'values' => $values,
+            'values' => $shouldWrap ? [$values] : $values,
         ];
     }
 
@@ -194,11 +198,6 @@ class MongodbGrammar extends Grammar
         } catch (\Throwable $e) {
             return $e instanceof \ErrorException;
         }
-    }
-
-    public function parameter($value)
-    {
-        return $this->isExpression($value) ? $this->getValue($value) : $value;
     }
 
     protected function whereBasic(Builder $query, $where): array
@@ -323,14 +322,5 @@ class MongodbGrammar extends Grammar
     protected function whereRaw(Builder $query, $where): array
     {
         return $where['sql'];
-    }
-
-    public function wrap($value, $prefixAlias = false)
-    {
-        // TODO only remove table prefix. Allow dot notation
-        $value = $this->isExpression($value) ? $this->getValue($value) : $value;
-        $segments = explode('.', $value);
-
-        return end($segments);
     }
 }

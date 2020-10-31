@@ -19,6 +19,6 @@ class Processor extends IlluminateProcessor
             throw new UnsupportedByMongoDBException('$sequence other than "_id"');
         }
 
-        return $connection->getLastInserted()->getInsertedId();
+        return $connection->getLastInserted();
     }
 }

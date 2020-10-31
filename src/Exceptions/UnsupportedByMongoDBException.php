@@ -8,11 +8,13 @@ class UnsupportedByMongoDBException extends \Exception
 {
     protected string $feature;
 
-    public function __construct($feature = 'This feature', $code = 0, Throwable $previous = null)
+    public function __construct($feature = 'This feature', bool $plural = false, $code = 0, Throwable $previous = null)
     {
         $this->feature = $feature;
 
-        parent::__construct($feature . ' is unsupported by MongoDB', $code, $previous);
+        $message = sprintf('%s %s unsupported by MongoDB', $feature, $plural ? 'are' : 'is');
+
+        parent::__construct($message, $code, $previous);
     }
 
     public function getFeature(): string
