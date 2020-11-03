@@ -40,7 +40,7 @@ class Builder extends IlluminateBuilder
         return $this->aggregateGroupedColumn(__FUNCTION__, $column);
     }
 
-    public function count($columns = '*')
+    public function count($columns = '*'): int
     {
         return (int) $this->aggregate(__FUNCTION__, null);
     }
@@ -48,6 +48,19 @@ class Builder extends IlluminateBuilder
     public function dd(): void
     {
         dd($this->collection->getCollectionName(), $this->toSql());
+    }
+
+    public function delete($id = null): int
+    {
+        if ($id !== null) {
+            $this->where('_id', $id);
+        }
+
+        return $this->connection->delete(
+            $this->grammar->compileDelete($this), $this->cleanBindings(
+                $this->grammar->prepareBindingsForDelete($this->bindings),
+            ),
+        );
     }
 
     public function dump(): self

@@ -10,6 +10,8 @@ class Processor extends IlluminateProcessor
 {
     public function processInsertGetId(Builder $query, $sql, $values, $sequence = null)
     {
+        $sequence ??= '_id';
+
         /** @var \Recoded\MongoDB\Database\MongodbConnection $connection */
         $connection = $query->getConnection();
 

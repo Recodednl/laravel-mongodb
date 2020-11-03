@@ -182,7 +182,7 @@ class MongodbGrammar extends Grammar
 
     protected function convertKey(string $column, $value)
     {
-        if (preg_match('/(.*\.)?_id$/', $column) && is_string($value)) {
+        if (preg_match('/^(.*\.)?_id$/', $column) && is_string($value)) {
             return new ObjectId($value);
         }
 
