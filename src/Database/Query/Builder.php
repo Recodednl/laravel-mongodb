@@ -2,6 +2,7 @@
 
 namespace Recoded\MongoDB\Database\Query;
 
+use Closure;
 use Illuminate\Database\Query\Builder as IlluminateBuilder;
 use MongoDB\BSON\ObjectId;
 use MongoDB\BSON\UTCDateTime;
@@ -12,12 +13,16 @@ use Recoded\MongoDB\Exceptions\UnsupportedByMongoDBException;
 
 class Builder extends IlluminateBuilder
 {
+    public array $aggregations;
+
     protected Collection $collection;
 
     /**
      * @var \Recoded\MongoDB\Database\MongodbConnection
      */
     public $connection;
+
+    public array $existWheres = [];
 
     public $operators = [
         '=', '<', '>', '<=', '>=', '<>', '!=', '<=>',
@@ -30,9 +35,32 @@ class Builder extends IlluminateBuilder
         return $this;
     }
 
+    /**
+     * Add an exists clause to the query.
+     *
+     * @param  \Illuminate\Database\Query\Builder  $query
+     * @param  string  $boolean
+     * @param  bool  $not
+     * @return \Illuminate\Database\Query\Builder
+     */
     public function addWhereExistsQuery(IlluminateBuilder $query, $boolean = 'and', $not = false)
     {
-        throw new UnsupportedByMongoDBException('(Doesnt)-exists Query');
+        $type = $not ? 'NotExists' : 'Exists';
+
+        $this->existWheres[] = compact('type', 'query', 'boolean');
+
+        return $this;
+    }
+
+    public function aggregateGroupedColumn($function, $column)
+    {
+        $function = '$' . ltrim($function, '$');
+        $column = '$' . ltrim($column, '$');
+
+        return $this->aggregate('group', [
+            '_id' => '',
+            'aggregate' => [$function => $column],
+        ]);
     }
 
     public function avg($column)
@@ -70,6 +98,14 @@ class Builder extends IlluminateBuilder
         return $this;
     }
 
+    public function embed(string $collection, $first, $second = null, string $as = null): self
+    {
+        return $this->join(
+            $this->joinTableAs($collection, $as),
+            $first, '=', $second, 'embed',
+        );
+    }
+
     public function exists(): bool
     {
         return $this->count() > 0;
@@ -82,17 +118,6 @@ class Builder extends IlluminateBuilder
         return parent::from($collection);
     }
 
-    public function aggregateGroupedColumn($function, $column)
-    {
-        $function = '$' . ltrim($function, '$');
-        $column = '$' . ltrim($column, '$');
-
-        return $this->aggregate('group', [
-            '_id' => '',
-            'aggregate' => [$function => $column],
-        ]);
-    }
-
     public function insertOrIgnore(array $values)
     {
         throw new UnsupportedByMongoDBException('InsertOrIgnore');
@@ -101,6 +126,32 @@ class Builder extends IlluminateBuilder
     public function insertUsing(array $columns, $query)
     {
         throw new UnsupportedByMongoDBException('InsertUsing');
+    }
+
+    public function join($table, $first, $operator = null, $second = null, $type = 'inner', $where = false)
+    {
+        $as = $table;
+
+        if (preg_match('/^(.+)\s+as\s+(.+)$/', $table, $matches)) {
+            [, $table, $as] = $matches;
+        }
+
+        $join = $this->newJoinClause($this, $type, $table)->as($as);
+
+        if ($first instanceof Closure) {
+            $first($join);
+
+            $this->joins[] = $join;
+        } else {
+            $this->joins[] = $join->on($first, '=', $second);
+        }
+
+        return $this;
+    }
+
+    public function joinTableAs(string $collection, string $as = null): string
+    {
+        return implode(' as ', array_filter([$collection, $as]));
     }
 
     public function max($column)
@@ -116,6 +167,11 @@ class Builder extends IlluminateBuilder
     public function min($column)
     {
         return $this->aggregateGroupedColumn(__FUNCTION__, $column);
+    }
+
+    protected function newJoinClause(IlluminateBuilder $parentQuery, $type, $table)
+    {
+        return new JoinClause($parentQuery, $type, $table);
     }
 
     public function orderBy($column, $direction = 'asc')
@@ -201,5 +257,18 @@ class Builder extends IlluminateBuilder
         return $this->collection
             ->deleteMany([])
             ->isAcknowledged();
+    }
+
+    public function whereExists(Closure $callback, $boolean = 'and', $not = false)
+    {
+        $clause = $this->newJoinClause($this, 'embed', null);
+
+        call_user_func($callback, $clause);
+
+        if ($clause->table === null) {
+            throw new \LogicException('WhereExists should specify a table');
+        }
+
+        return $this->addWhereExistsQuery($clause, $boolean, $not);
     }
 }
