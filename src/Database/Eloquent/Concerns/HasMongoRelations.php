@@ -5,7 +5,9 @@ namespace Recoded\MongoDB\Database\Eloquent\Concerns;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Str;
+use Recoded\MongoDB\Database\Eloquent\Relations\BelongsTo;
 use Recoded\MongoDB\Database\Eloquent\Relations\BelongsToMultiple;
+use Recoded\MongoDB\Database\Eloquent\Relations\HasMany;
 
 /**
  * @mixin \Illuminate\Database\Eloquent\Concerns\HasRelationships
@@ -46,8 +48,23 @@ trait HasMongoRelations
         return $this->newBelongsToMultiple($instance->newQuery(), $this, $foreignKey, $ownerKey, $relation);
     }
 
+    public function getForeignKey(): string
+    {
+        return Str::snake(class_basename($this)) . '_' . ltrim($this->getKeyName(), '_');
+    }
+
+    protected function newBelongsTo(Builder $query, Model $child, $foreignKey, $ownerKey, $relation)
+    {
+        return new BelongsTo($query, $child, $foreignKey, $ownerKey, $relation);
+    }
+
     protected function newBelongsToMultiple(Builder $query, Model $child, $foreignKey, $ownerKey, $relation)
     {
         return new BelongsToMultiple($query, $child, $foreignKey, $ownerKey, $relation);
+    }
+
+    protected function newHasMany(Builder $query, Model $parent, $foreignKey, $localKey)
+    {
+        return new HasMany($query, $parent, $foreignKey, $localKey);
     }
 }

@@ -2,6 +2,7 @@
 
 namespace Recoded\MongoDB\Database;
 
+use Illuminate\Database\Eloquent\Builder as EloquentBuilder;
 use Illuminate\Database\Query\Builder;
 use Illuminate\Database\Query\Expression;
 use Illuminate\Database\Schema\Blueprint;
@@ -15,8 +16,8 @@ trait Grammar
 
     public function mongoWrap($value, $table = null): string
     {
-        if ($table instanceof Builder) {
-            $table = $table->from;
+        if ($table instanceof Builder || $table instanceof EloquentBuilder) {
+            $table = $table instanceof Builder ? $table->from : $table->getQuery()->from;
         }
 
         $segments = explode('.', $value);

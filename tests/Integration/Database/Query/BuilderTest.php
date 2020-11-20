@@ -33,8 +33,9 @@ class BuilderTest extends TestCase
 
         $pid = (string) $product['_id'];
 
-        DB::table('items')->where('user_id', $userId)->delete($pid);
+        $amount = DB::table('items')->where('user_id', $userId)->delete($pid);
 
+        $this->assertEquals(1, $amount);
         $this->assertEquals(3, DB::table('items')->count());
 
         $product = DB::table('items')->first();

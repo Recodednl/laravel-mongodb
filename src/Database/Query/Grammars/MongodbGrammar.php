@@ -128,7 +128,7 @@ class MongodbGrammar extends Grammar
     {
         return [
             'collection' => $query->from,
-            'filter' => $this->compileWheres($query),
+            'filter' => $this->arrayifyWheres($query, $this->compileWheres($query)),
         ];
     }
 
@@ -199,8 +199,8 @@ class MongodbGrammar extends Grammar
 
     protected function compileOrdersToArray(Builder $query, $orders): array
     {
-        return array_reduce($orders, function (array $carry, array $order) {
-            $carry[$order['column']] = $order['direction'];
+        return array_reduce($orders, function (array $carry, array $order) use ($query) {
+            $carry[$this->mongoWrap($order['column'], $query)] = $order['direction'];
 
             return $carry;
         }, []);
@@ -215,7 +215,7 @@ class MongodbGrammar extends Grammar
     {
         return [
             'collection' => $this->wrapTable($query->from),
-            'filter' => $this->compileWheres($query),
+            'filter' => $this->arrayifyWheres($query, $this->compileWheres($query)),
             'values' => $this->compileUpdateColumns($query, $values),
         ];
     }
@@ -241,9 +241,9 @@ class MongodbGrammar extends Grammar
         return $this->arrayifyWheres($query, $query->wheres);
     }
 
-    protected function convertKey(string $column, $value)
+    public function convertKey($column, $value)
     {
-        if (preg_match('/^(.*\.)?_id$/', $column) && is_string($value)) {
+        if (is_string($column) && preg_match('/^(.*\.)?_id$/', $column) && is_string($value)) {
             return new ObjectId($value);
         }
 
@@ -318,7 +318,7 @@ class MongodbGrammar extends Grammar
 
     protected function whereIn(Builder $query, $where): array
     {
-        $column = $where['column'];
+        $column = $this->mongoWrap($where['column'], $query);
 
         $values = array_map(fn ($value) => $this->convertKey($column, $value), $where['values']);
 
@@ -327,7 +327,7 @@ class MongodbGrammar extends Grammar
 
     protected function whereNotIn(Builder $query, $where): array
     {
-        $column = $where['column'];
+        $column = $this->mongoWrap($where['column'], $query);
 
         $values = array_map(fn ($value) => $this->convertKey($column, $value), $where['values']);
 
@@ -352,7 +352,7 @@ class MongodbGrammar extends Grammar
 
     protected function whereBetween(Builder $query, $where): array
     {
-        $column = $where['column'];
+        $column = $this->mongoWrap($where['column'], $query);
         $values = $where['values'];
 
         if ($where['not']) {
