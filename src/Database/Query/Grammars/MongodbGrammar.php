@@ -4,15 +4,20 @@ namespace Recoded\MongoDB\Database\Query\Grammars;
 
 use Illuminate\Database\Query\Builder;
 use Illuminate\Database\Query\Grammars\Grammar;
+use Illuminate\Support\Arr;
 use Illuminate\Support\Collection;
 use MongoDB\BSON\ObjectId;
 use MongoDB\BSON\Regex;
+use Recoded\MongoDB\Database\Query\JoinClause;
+use Recoded\MongoDB\Exceptions\UnsupportedByMongoDBException;
 
 class MongodbGrammar extends Grammar
 {
     use \Recoded\MongoDB\Database\Grammar;
 
     protected $selectComponents = [
+        'joins',
+        'existWheres',
         'wheres',
         'aggregations',
         'offset',
@@ -22,6 +27,25 @@ class MongodbGrammar extends Grammar
         'aggregate',
 //        'groups',
     ];
+
+    protected function arrayifyWheres(Builder $query, array $wheres): array
+    {
+        return collect($wheres)->map(function (array $where, int $i) use ($query, $wheres) {
+            if ($i == 0 && count($wheres) > 1 && $where['boolean'] == 'and') {
+                $where['boolean'] = $wheres[$i + 1]['boolean'];
+            }
+
+            $result = $this->{"where{$where['type']}"}($query, $where);
+
+            if ($where['boolean'] == 'or') {
+                $result = ['$or' => [$result]];
+            } elseif (count($wheres) > 1) {
+                $result = ['$and' => [$result]];
+            }
+
+            return $result;
+        })->reduce('array_merge_recursive', []);
+    }
 
     protected function compileAggregate(Builder $query, $aggregate)
     {
@@ -49,38 +73,82 @@ class MongodbGrammar extends Grammar
 
     protected function compileComponents(Builder $query): array
     {
-        $match = [];
-        $sql = [];
+        $types = ['preMatch', 'match', 'aggregations'];
+        $sql = array_fill_keys($types, []);
 
         foreach ($this->selectComponents as $component) {
             if (isset($query->{$component})) {
                 $method = 'compile' . ucfirst($component);
 
-                $value = $this->$method($query, $query->{$component});
+                $values = $this->$method($query, $query->{$component});
 
-                if ($value === null) {
+                if ($values === null) {
                     continue;
                 }
 
-                if ($component === 'wheres') {
-                    $match = array_merge($match, $value);
+                $add = function (?string $type, array $values) use (&$sql) {
+                    $type ??= 'aggregations';
+
+                    $sql[$type] = array_merge($sql[$type], $values);
+                };
+
+                // TODO optimize adding multiple types
+                $whereAssocArrayTypes = array_filter($values, function ($value) use ($types) {
+                    if (!is_array($value) || !Arr::isAssoc($value)) {
+                        return false;
+                    }
+
+                    $keysTypes = array_filter(array_keys($value), fn ($key) => in_array($key, $types));
+
+                    return count($keysTypes) === count($value);
+                });
+
+                $containsOnlyAssocArrays = count($whereAssocArrayTypes) === count($values);
+
+                if (!Arr::isAssoc($values) && $containsOnlyAssocArrays) {
+                    foreach ($values as $subValues) {
+                        foreach ($subValues as $type => $typeValues) {
+                            $add($type, $typeValues);
+                        }
+                    }
                 } else {
-                    $sql[] = $value;
+                    $type = $component === 'wheres' ? 'match' : ($component === 'joins' ? 'preMatch' : null);
+
+                    $add($type, $type === null ? [$values] : $values);
                 }
             }
         }
 
-        $final = empty($match) ? [] : [['$match' => $match]];
+        $sql['match'] = empty($sql['match']) ? [] : [['$match' => $this->arrayifyWheres($query, $sql['match'])]];
 
-        return [...$final, ...$sql];
+        return Arr::flatten($sql, 1);
     }
 
     public function compileDelete(Builder $query): array
     {
         return [
             'collection' => $query->from,
-            'filter' => $this->compileWheres($query),
+            'filter' => $this->arrayifyWheres($query, $this->compileWheres($query)),
         ];
+    }
+
+    protected function compileEmbedJoin(JoinClause $clause): array
+    {
+        return ['$lookup' => [
+            'from' => $clause->table,
+            'localField' => $clause->first,
+            'foreignField' => $clause->second,
+            'as' => $clause->name,
+        ]];
+    }
+
+    protected function compileExistWheres(Builder $query, array $wheres)
+    {
+        return array_map(function (array $where) use ($query) {
+            $type = $where['type'];
+
+            return $this->{'where' . $type}($query, $where);
+        }, $wheres);
     }
 
     public function compileInsert(Builder $query, array $values): array
@@ -91,6 +159,17 @@ class MongodbGrammar extends Grammar
             'collection' => $query->from,
             'values' => $shouldWrap ? [$values] : $values,
         ];
+    }
+
+    protected function compileJoins(Builder $query, $joins)
+    {
+        return array_map(function (JoinClause $clause) {
+            if (!method_exists($this, $method = 'compile' . ucfirst($clause->type) . 'Join')) {
+                throw new UnsupportedByMongoDBException($clause->type . ' join');
+            }
+
+            return $this->$method($clause);
+        }, $joins);
     }
 
     protected function compileLimit(Builder $query, $limit): array
@@ -120,8 +199,8 @@ class MongodbGrammar extends Grammar
 
     protected function compileOrdersToArray(Builder $query, $orders): array
     {
-        return array_reduce($orders, function (array $carry, array $order) {
-            $carry[$order['column']] = $order['direction'];
+        return array_reduce($orders, function (array $carry, array $order) use ($query) {
+            $carry[$this->mongoWrap($order['column'], $query)] = $order['direction'];
 
             return $carry;
         }, []);
@@ -136,7 +215,7 @@ class MongodbGrammar extends Grammar
     {
         return [
             'collection' => $this->wrapTable($query->from),
-            'filter' => $this->compileWheres($query),
+            'filter' => $this->arrayifyWheres($query, $this->compileWheres($query)),
             'values' => $this->compileUpdateColumns($query, $values),
         ];
     }
@@ -150,39 +229,21 @@ class MongodbGrammar extends Grammar
 
     public function compileWheres(Builder $query): array
     {
-        if (is_null($query->wheres)) {
+        if (is_null($wheres = $query->wheres)) {
             return [];
         }
 
-        if (count($sql = $this->compileWheresToArray($query)) > 0) {
-            return $sql;
-        }
-
-        return [];
+        return count($wheres) > 0 ? $wheres : [];
     }
 
     protected function compileWheresToArray($query): array
     {
-        return collect($query->wheres)->map(function (array $where, int $i) use ($query) {
-            if ($i == 0 && count($query->wheres) > 1 && $where['boolean'] == 'and') {
-                $where['boolean'] = $query->wheres[$i + 1]['boolean'];
-            }
-
-            $result = $this->{"where{$where['type']}"}($query, $where);
-
-            if ($where['boolean'] == 'or') {
-                $result = ['$or' => [$result]];
-            } elseif (count($query->wheres) > 1) {
-                $result = ['$and' => [$result]];
-            }
-
-            return $result;
-        })->reduce('array_merge_recursive', []);
+        return $this->arrayifyWheres($query, $query->wheres);
     }
 
-    protected function convertKey(string $column, $value)
+    public function convertKey($column, $value)
     {
-        if (preg_match('/^(.*\.)?_id$/', $column) && is_string($value)) {
+        if (is_string($column) && preg_match('/^(.*\.)?_id$/', $column) && is_string($value)) {
             return new ObjectId($value);
         }
 
@@ -247,7 +308,7 @@ class MongodbGrammar extends Grammar
             $result = ['$' . $operator => $value];
         }
 
-        return [$column => $not ? ['$not' => $result] : $result];
+        return [$this->mongoWrap($column, $query) => $not ? ['$not' => $result] : $result];
     }
 
     protected function whereNested(Builder $query, $where): array
@@ -257,7 +318,7 @@ class MongodbGrammar extends Grammar
 
     protected function whereIn(Builder $query, $where): array
     {
-        $column = $where['column'];
+        $column = $this->mongoWrap($where['column'], $query);
 
         $values = array_map(fn ($value) => $this->convertKey($column, $value), $where['values']);
 
@@ -266,7 +327,7 @@ class MongodbGrammar extends Grammar
 
     protected function whereNotIn(Builder $query, $where): array
     {
-        $column = $where['column'];
+        $column = $this->mongoWrap($where['column'], $query);
 
         $values = array_map(fn ($value) => $this->convertKey($column, $value), $where['values']);
 
@@ -291,7 +352,7 @@ class MongodbGrammar extends Grammar
 
     protected function whereBetween(Builder $query, $where): array
     {
-        $column = $where['column'];
+        $column = $this->mongoWrap($where['column'], $query);
         $values = $where['values'];
 
         if ($where['not']) {
@@ -317,6 +378,60 @@ class MongodbGrammar extends Grammar
                 '$lte' => $values[1],
             ],
         ];
+    }
+
+    protected function whereExists(Builder $query, $where, bool $not = false)
+    {
+        [
+            'boolean' => $boolean,
+            'query' => $constrain,
+        ] = $where;
+
+        if (!$constrain instanceof JoinClause) {
+            throw new UnsupportedByMongoDBException('Non-join where exists queries');
+        }
+
+        $name = sprintf('where_%s_exists_%s', $constrain->table, uniqid());
+
+        $constrain->as($name);
+
+        $preMatch = $this->compileJoins($query, [$constrain]);
+
+        if ($constrain->countConstrain !== null) {
+            $preMatch[] = [
+                '$addFields' => [
+                    $name => ['$size' => "$${name}"],
+                ],
+            ];
+
+            $match = [
+                'boolean' => $boolean,
+                'column' => $name,
+                'operator' => $constrain->countConstrain[0],
+                'type' => 'Basic',
+                'value' => $constrain->countConstrain[1],
+            ];
+        } else {
+            $match = $not ? ['$size' => 0] : ['$not' => ['$size' => 0]];
+            $match = [
+                'boolean' => $boolean,
+                'sql' => [$name => $match],
+                'type' => 'Raw',
+            ];
+        }
+
+        return [
+            'preMatch' => $preMatch,
+            'match' => [$match],
+            'aggregations' => [
+                ['$project' => [$name => false]],
+            ],
+        ];
+    }
+
+    protected function whereNotExists(Builder $query, $where)
+    {
+        return $this->whereExists($query, $where, true);
     }
 
     protected function whereRaw(Builder $query, $where): array
